@@ -15,7 +15,7 @@ public:
     bool ModEnabled = true;
     float MaxLevel = 201.0f;
     float FadeLevel = 65.0f;
-    bool ShowConsole = false;
+    bool ShowConsole = true;
 
     string configPath;
     time_t configLastEditTimestamp = 0;
@@ -86,6 +86,8 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
 {
     lock_guard<mutex> lock(modConfigAndDataMutex);
 
+    if (*valuePointer > modConfig.MaxLevel) return;
+
     float val;
     const float invFactor2 = 1.0f / factor2;
 
@@ -100,7 +102,11 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
         float baseDifficulty = (factor2 - modConfig.FadeLevel) * invFactor2;
         baseDifficulty *= baseDifficulty;
 
-        val = baseDifficulty * (1.0f - normalizedProgress);
+        // linear
+        // val = baseDifficulty * (1.0f - normalizedProgress);
+
+        // smooth
+        val = baseDifficulty * (1.0 - normalizedProgress) * (1.0 - normalizedProgress);
     }
 
     // NaN Check
@@ -193,7 +199,7 @@ void UpdateModConfigAndData()
             DisableLevelingHook(modData.TargetProcessAbsoluteAddr);
         }
     }
-    
+
     lock.unlock();
 
     if (modConfig.ShowConsole) // The console open only on start and this value sets only on start too
@@ -250,7 +256,7 @@ void MainThreadFunction(HMODULE hModule)
     if (modConfig.ShowConsole)
     {
         CreateConsoleWindow();
-    
+
         if (configExists)
         {
             ConsoleOut("Loading config from: %s ...", modConfig.configPath.c_str());

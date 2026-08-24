@@ -10,9 +10,38 @@ bool LooksLikeHeapPtr(uintptr_t p)
     return true;
 }
 
+bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& character, Skill& skill)
+{
+    stats = 0;
+    character = 0;
+    skill = Skill::Unknown;
+
+    if (!valuePointer) return false;
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(valuePointer);
+
+    for (int off : kSkillOffs)
+    {
+        const uintptr_t cand = addr - static_cast<uintptr_t>(off);
+        if (cand < 0x10000 || (cand & 0x7) != 0) continue;
+
+        uintptr_t me = 0;
+        if (!SafeRead(cand + 0x10, me) || !LooksLikeHeapPtr(me)) continue;
+
+        stats = cand;
+        character = me;
+        skill = static_cast<Skill>(off);
+
+        return true;
+    }
+
+    return false;
+}
+
+/*
 const char* SkillName(Skill s)
 {
-    switch (s) {
+    switch (s)
+    {
         case Skill::Strength: return "Strength";
         case Skill::Fitness: return "Fitness";
         case Skill::Dexterity: return "Dexterity";
@@ -59,59 +88,10 @@ const char* SkillName(Skill s)
     }
 }
 
-bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& character, Skill& skill)
-{
-    stats = 0;
-    character = 0;
-    skill = Skill::Unknown;
-
-    if (!valuePointer) return false;
-    const uintptr_t addr = reinterpret_cast<uintptr_t>(valuePointer);
-
-    for (int off : kSkillOffs)
-    {
-        const uintptr_t cand = addr - static_cast<uintptr_t>(off);
-        if (cand < 0x10000 || (cand & 0x7) != 0) continue;
-
-        uintptr_t me = 0;
-        if (!SafeRead(cand + 0x10, me) || !LooksLikeHeapPtr(me)) continue;
-
-        stats = cand;
-        character = me;
-        skill = static_cast<Skill>(off);
-
-        return true;
-    }
-
-    return false;
-}
-
-bool ReadSkill(uintptr_t stats, Skill skill, float& out)
-{
-    out = 0.f;
-    if (!stats || skill == Skill::Unknown)
-        return false;
-    return SafeRead(stats + static_cast<int>(skill), out);
-}
-
-bool WriteSkill(uintptr_t stats, Skill skill, float value)
-{
-    if (!stats || skill == Skill::Unknown)
-        return false;
-    __try {
-        *reinterpret_cast<float*>(stats + static_cast<int>(skill)) = value;
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 bool ReadAllSkills(uintptr_t stats, AllSkills& s)
 {
     s = {};
-    if (!stats)
-        return false;
+    if (!stats) return false;
 
     bool ok = true;
     ok &= SafeRead(stats + 0x080, s.strength);
@@ -156,5 +136,29 @@ bool ReadAllSkills(uintptr_t stats, AllSkills& s)
     ok &= SafeRead(stats + 0x11C, s.juryRig);
     ok &= SafeRead(stats + 0x120, s.meleeAttack);
     ok &= SafeRead(stats + 0x124, s.meleeDefence);
+
     return ok;
 }
+
+bool ReadSkill(uintptr_t stats, Skill skill, float& out)
+{
+    out = 0.f;
+    if (!stats || skill == Skill::Unknown)
+        return false;
+    return SafeRead(stats + static_cast<int>(skill), out);
+}
+
+bool WriteSkill(uintptr_t stats, Skill skill, float value)
+{
+    if (!stats || skill == Skill::Unknown)
+        return false;
+    __try {
+        *reinterpret_cast<float*>(stats + static_cast<int>(skill)) = value;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+*/

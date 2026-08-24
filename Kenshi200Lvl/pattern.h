@@ -176,8 +176,8 @@ const char IS_PLAYER_CHARACTER_MASK[] =
 
 //
 
-const char* SkillName(Skill s);
 bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& character, Skill& skill);
-bool ReadSkill(uintptr_t stats, Skill skill, float& out);
-bool WriteSkill(uintptr_t stats, Skill skill, float value);
-bool ReadAllSkills(uintptr_t stats, AllSkills& s);
+// const char* SkillName(Skill s);
+// bool ReadSkill(uintptr_t stats, Skill skill, float& out);
+// bool WriteSkill(uintptr_t stats, Skill skill, float value);
+// bool ReadAllSkills(uintptr_t stats, AllSkills& s);

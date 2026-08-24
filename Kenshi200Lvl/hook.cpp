@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <hook.h>
 #include <MinHook.h>
 #include <algorithm>
@@ -7,22 +5,6 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
-
-void CreateConsoleWindow()
-{
-    AllocConsole();
-    static_cast<void>(freopen("CONIN$", "r", stdin));
-    static_cast<void>(freopen("CONOUT$", "w", stdout));
-    static_cast<void>(freopen("CONOUT$", "w", stderr));
-}
-
-void DestroyConsoleWindow()
-{
-    FreeConsole();
-    fclose(stdin);
-    fclose(stdout);
-    fclose(stderr);
-}
 
 DWORD RvaToOffset(DWORD rva, PIMAGE_SECTION_HEADER sectionHeader, unsigned int numberOfSections)
 {
@@ -83,10 +65,10 @@ DWORD FindPatternInFile(const string& filename, const span<const BYTE>& pattern,
     size_t bufferSize = buffer.size();
     size_t diffSize = bufferSize - patternSize;
 
-    for (size_t i = 0; i <= diffSize; ++i)
+    for (size_t i = 0; i <= diffSize; i++)
     {
         bool found = true;
-        for (size_t j = 0; j < patternSize; ++j)
+        for (size_t j = 0; j < patternSize; j++)
         {
             if (mask[j] == 'x' && buffer[i + j] != pattern[j])
             {

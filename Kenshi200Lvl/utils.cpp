@@ -1,8 +1,26 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <iomanip>
 #include <sstream>
 #include <chrono>
 
 #include <utils.h>
+
+void CreateConsoleWindow()
+{
+    AllocConsole();
+    static_cast<void>(freopen("CONIN$", "r", stdin));
+    static_cast<void>(freopen("CONOUT$", "w", stdout));
+    static_cast<void>(freopen("CONOUT$", "w", stderr));
+}
+
+void DestroyConsoleWindow()
+{
+    FreeConsole();
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
+}
 
 string PathCombine(const string& path1, const string& path2)
 {
@@ -37,4 +55,31 @@ string FormatDouble(double value, int maxDigitsAfterPoint)
     }
 
     return str;
+}
+
+string ReadMsvcString(uintptr_t strAddr)
+{
+    uint64_t size = 0, capacity = 0;
+    if (!SafeRead(strAddr + 0x10, size) || !SafeRead(strAddr + 0x18, capacity)) return {};
+    if (size == 0 || size > 512) return {};
+
+    char buf[513]{};
+    if (capacity > 15)
+    {
+        uintptr_t heap = 0;
+        if (!SafeRead(strAddr, heap) || !heap) return {};
+        for (size_t i = 0; i < size && i < 512; ++i)
+        {
+            SafeRead(heap + i, buf[i]);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < size && i < 15; ++i)
+        {
+            SafeRead(strAddr + i, buf[i]);
+        }
+    }
+
+    return string(buf, (size_t)size);
 }

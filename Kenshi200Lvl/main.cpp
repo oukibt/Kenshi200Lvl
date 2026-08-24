@@ -1,92 +1,49 @@
 #include <main.h>
 
+#include <utils.h>
+#include <hook.h>
+
 using namespace std;
 
-class ModData
-{
-public:
-    LPVOID TargetProcessAbsoluteAddr = 0x0;
-
-} modData;
-
-class ModConfig
-{
-public:
-    bool ModEnabled = true;
-    float MaxLevel = 201.0f;
-    float FadeLevel = 65.0f;
-    bool ShowConsole = true;
-
-    string configPath;
-    time_t configLastEditTimestamp = 0;
-
-    ModConfig()
-    {
-    }
-
-    ModConfig(bool modEnabled, float maxLevel, float fadeLevel, bool showConsole)
-    {
-        ModEnabled = modEnabled;
-        MaxLevel = maxLevel;
-        FadeLevel = fadeLevel;
-        ShowConsole = showConsole;
-    }
-} modConfig;
-
-mutex modConfigAndDataMutex;
-
-vector<BYTE> LEVELING_FUNCTION_PATTERN = {
-
-    0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0xF3, 0x0F,
-    0x10, 0x05, 0x0A, 0x65, 0xDB, 0x00, 0x0F, 0x29,
-    0x74, 0x24, 0x20, 0xF3, 0x0F, 0x10, 0x31, 0x0F,
-    0x28, 0xDA, 0x48, 0x8B, 0xD9, 0xF3, 0x0F, 0x5E,
-    0xC2, 0xF3, 0x0F, 0x5C, 0xDE, 0xF3, 0x0F, 0x59,
-    0xD8, 0x0F, 0x57, 0xC0, 0x0F, 0x2F, 0xC1, 0xF3,
-    0x0F, 0x59, 0xDB, 0x73, 0x47, 0x0F, 0x2F, 0xC3,
-    0x73, 0x42, 0xF3, 0x0F, 0x10, 0x05, 0x56, 0xD3,
-    0xDB, 0x00, 0x0F, 0x2F, 0xC8, 0x77, 0x35, 0x0F,
-    0x2F, 0xD8, 0x77, 0x30, 0xF3, 0x0F, 0x59, 0xD9,
-    0xF3, 0x0F, 0x58, 0xDE, 0xF3, 0x0F, 0x11, 0x19,
-    0x0F, 0x28, 0xC3, 0xFF, 0x15, 0x27, 0x2B, 0x98,
-    0x01, 0x84, 0xC0, 0x74, 0x17, 0x0F, 0x28, 0xC6,
-    0xF3, 0x0F, 0x11, 0x33, 0xFF, 0x15, 0x16, 0x2B,
-    0x98, 0x01, 0x84, 0xC0, 0x74, 0x06, 0xC7, 0x03,
-    0x00, 0x00, 0xA0, 0x41, 0x0F, 0x28, 0x74, 0x24,
-    0x20, 0x48, 0x83, 0xC4, 0x30, 0x5B, 0xC3, 0xCC,
-    0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
-};
-
-const char LEVELING_FUNCTION_MASK[] =
-    "xxxxxxxx"
-    "xx????xx"
-    "xxxxxxxx"
-    "xxxxxxxx"
-    "xxxxxxxx"
-    "xxxxxxxx"
-    "xxx??xxx"
-    "??xxxx??"
-    "??xxx??x"
-    "xx??xxxx"
-    "xxxxxxxx"
-    "xxxxx???"
-    "?xx??xxx"
-    "xxxxxx??"
-    "??xx??xx"
-    "xxxxxxxx"
-    "xxxxxxxx"
-    "xxxxxxxx";
+ModConfig modConfig;
 
 //
 
 typedef void (*OriginalFunctionType)(float*, float, float);
-OriginalFunctionType originalFunction = nullptr;
+OriginalFunctionType levelingFunction = nullptr;
+
+typedef bool(__fastcall* IsPlayerCharacter_fn)(void* character);
+IsPlayerCharacter_fn g_isPlayerCharacter = nullptr;
+
+// Ingame Functions
+
+bool CallIsPlayerCharacter_SEH(void* character)
+{
+    if (!character || !g_isPlayerCharacter) return false;
+
+    bool r = false;
+    __try
+    {
+        r = g_isPlayerCharacter(character);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        r = false;
+    }
+    return r;
+}
+
+// Ingame Callbacks
 
 void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float factor2)
 {
-    lock_guard<mutex> lock(modConfigAndDataMutex);
+    lock_guard<mutex> lock(modConfig.MutexLock);
 
-    if (*valuePointer > modConfig.MaxLevel) return;
+    uintptr_t character = 0, stats = 0;
+    Skill currentSkill = Skill::Unknown;
+    ResolveFromStatPtr(valuePointer, stats, character, currentSkill);
+
+    // std::string name = character ? ReadMsvcString(character + 0x18) : "UNKNOWN";
 
     float val;
     const float invFactor2 = 1.0f / factor2;
@@ -98,15 +55,41 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     }
     else
     {
-        float normalizedProgress = (*valuePointer - modConfig.FadeLevel) / (modConfig.MaxLevel - modConfig.FadeLevel);
-        float baseDifficulty = (factor2 - modConfig.FadeLevel) * invFactor2;
-        baseDifficulty *= baseDifficulty;
 
-        // linear
-        // val = baseDifficulty * (1.0f - normalizedProgress);
+        const bool dontUsePlayerCurve = !character || (modConfig.PlayerCharactersOnly && !CallIsPlayerCharacter_SEH(reinterpret_cast<void*>(character)));
 
-        // smooth
-        val = baseDifficulty * (1.0 - normalizedProgress) * (1.0 - normalizedProgress);
+        if (dontUsePlayerCurve) // NPC + .ini flag or junk
+        {
+            if (*valuePointer > 101.0f) return;
+
+            float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
+            val = normalizedDifference * normalizedDifference;
+        }
+        else
+        {
+            float maxLevel = modConfig.MaxLevel;
+            for (auto& skill : modConfig.SkillsMaxLevels)
+            {
+                if (currentSkill == skill.skill)
+                {
+                    maxLevel = min<float>(skill.value, modConfig.MaxLevel);
+                    break;
+                }
+            }
+
+            if (*valuePointer > maxLevel) return;
+            if (maxLevel <= modConfig.FadeLevel) return;
+
+            float normalizedProgress = (*valuePointer - modConfig.FadeLevel) / (maxLevel - modConfig.FadeLevel);
+            float baseDifficulty = (factor2 - modConfig.FadeLevel) * invFactor2;
+            baseDifficulty *= baseDifficulty;
+
+            // linear
+            // val = baseDifficulty * (1.0f - normalizedProgress);
+
+            // smooth (vanilla based)
+            val = baseDifficulty * (1.0 - normalizedProgress) * (1.0 - normalizedProgress);
+        }
     }
 
     // NaN Check
@@ -118,6 +101,45 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
 
 //
 
+bool ResolveIsPlayerCharacter(const std::string& exePath, const std::string& exeName)
+{
+    DWORD rva = FindPatternInFile(exePath, IS_PLAYER_CHARACTER_PATTERN, IS_PLAYER_CHARACTER_MASK);
+    if (!rva) return false;
+
+    HMODULE base = GetModuleHandleA(exeName.c_str());
+    if (!base)
+    {
+        base = GetModuleHandleW(nullptr);
+    }
+
+    g_isPlayerCharacter = reinterpret_cast<IsPlayerCharacter_fn>((DWORD_PTR)base + rva);
+
+    if (modConfig.ShowConsole)
+    {
+        ConsoleOut("IsPlayerCharacter @ %p (RVA 0x%X)", g_isPlayerCharacter, rva);
+    }
+
+    return g_isPlayerCharacter != nullptr;
+}
+
+bool ResolveLevelingFunction(const std::string& exePath, const std::string& exeName)
+{
+    DWORD rva = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
+    if (!rva) return false;
+
+    HMODULE base = GetModuleHandleA(exeName.c_str());
+    if (!base) base = GetModuleHandleW(nullptr);
+
+    modConfig.LevelingFunctionAbsoluteAddr = reinterpret_cast<LPVOID>((DWORD_PTR)base + rva);
+
+    if (modConfig.ShowConsole)
+    {
+        ConsoleOut("Leveling function @ %p (RVA 0x%X)", modConfig.LevelingFunctionAbsoluteAddr, rva);
+    }
+
+    return modConfig.LevelingFunctionAbsoluteAddr != nullptr;
+}
+
 bool SetupLevelingHook(LPVOID absoluteAddr)
 {
     if (MH_Initialize() != MH_OK)
@@ -126,7 +148,7 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
-    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&originalFunction) != MH_OK)
+    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&levelingFunction) != MH_OK)
     {
         cerr << "Failed to create the hook." << endl;
         return false;
@@ -165,44 +187,57 @@ void DetachDLL(LPVOID absoluteAddr, HMODULE hModule)
 
 //
 
-void UpdateModConfigAndData()
+static int ProcessConfigIni(ModConfig& config)
 {
-    if (!filesystem::exists(modConfig.configPath)) return;
-
-    time_t editTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
-    if (editTimestamp == modConfig.configLastEditTimestamp) return;
-
-    modConfig.configLastEditTimestamp = editTimestamp;
-
     CSimpleIniA ini;
     ini.SetUnicode();
 
-    SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
-    if (rc != SI_OK) return;
+    SI_Error rc = ini.LoadFile(config.ConfigPath.c_str());
+    if (rc != SI_OK) return rc;
 
-    unique_lock<mutex> lock(modConfigAndDataMutex);
+    config.ModEnabled = !!ini.GetLongValue("Parameters", "Enabled", config.ModEnabled);
+    config.MaxLevel = max<float>((float)ini.GetDoubleValue("Parameters", "Max Level", config.MaxLevel), 101.0f);
+    config.FadeLevel = clamp<float>((float)ini.GetDoubleValue("Parameters", "Fade Level", config.FadeLevel), 0.0f, 101.0f);
+    config.ShowConsole = !!ini.GetLongValue("Parameters", "Debug Console", config.ShowConsole);
+    config.PlayerCharactersOnly = !!ini.GetLongValue("Parameters", "Player Characters Only", config.PlayerCharactersOnly);
 
-    bool lastModEnabledState = modConfig.ModEnabled;
+    for (auto& skill : config.SkillsMaxLevels)
+    {
+        skill.value = max<float>((float)ini.GetDoubleValue("Parameters", skill.iniName, skill.value), 101.0f);
+    }
 
-    modConfig.ModEnabled = !!ini.GetLongValue("Parameters", "Enabled", modConfig.ModEnabled);
-    modConfig.MaxLevel = max<float>((float)ini.GetDoubleValue("Parameters", "Max Level", modConfig.MaxLevel), 101.0f);
-    modConfig.FadeLevel = clamp<float>((float)ini.GetDoubleValue("Parameters", "Fade Level", modConfig.FadeLevel), 0.0f, 101.0f);
+    return rc;
+}
 
-    if (modConfig.ModEnabled != lastModEnabledState)
+void UpdateModConfigAndData()
+{
+    if (!filesystem::exists(modConfig.ConfigPath)) return;
+
+    time_t editTimestamp = filesystem::last_write_time(modConfig.ConfigPath).time_since_epoch().count();
+    if (editTimestamp == modConfig.ConfigLastEditTimestamp) return;
+
+    modConfig.ConfigLastEditTimestamp = editTimestamp;
+
+    ModConfigSnapshot snapshot(modConfig);
+
+    unique_lock<mutex> lock(modConfig.MutexLock);
+    ProcessConfigIni(modConfig);
+
+    if (modConfig.ModEnabled != snapshot.ModEnabled)
     {
         if (modConfig.ModEnabled)
         {
-            EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
+            EnableLevelingHook(modConfig.LevelingFunctionAbsoluteAddr);
         }
         else
         {
-            DisableLevelingHook(modData.TargetProcessAbsoluteAddr);
+            DisableLevelingHook(modConfig.LevelingFunctionAbsoluteAddr);
         }
     }
 
     lock.unlock();
 
-    if (modConfig.ShowConsole) // The console open only on start and this value sets only on start too
+    if (modConfig.ShowConsole)
     {
         auto currentZone = chrono::current_zone();
 
@@ -219,6 +254,41 @@ void UpdateModConfigAndData()
         int millisecond = totalMilliseconds % 1000;
 
         ConsoleOut("[%02d:%02d:%02d.%03d] Config updated", hour, minute, second, millisecond);
+        if (modConfig.ModEnabled != snapshot.ModEnabled)
+        {
+            ConsoleOut("  Mod %s -> %s",
+                snapshot.ModEnabled ? "Enabled" : "Disabled",
+                modConfig.ModEnabled ? "Enabled" : "Disabled");
+        }
+        if (modConfig.MaxLevel != snapshot.MaxLevel)
+        {
+            ConsoleOut("  Max Level %s -> %s",
+                FormatDouble(snapshot.MaxLevel, 4).c_str(),
+                FormatDouble(modConfig.MaxLevel, 4).c_str());
+        }
+        if (modConfig.FadeLevel != snapshot.FadeLevel)
+        {
+            ConsoleOut("  Fade Level %s -> %s",
+                FormatDouble(snapshot.FadeLevel, 4).c_str(),
+                FormatDouble(modConfig.FadeLevel, 4).c_str());
+        }
+        if (modConfig.PlayerCharactersOnly != snapshot.PlayerCharactersOnly)
+        {
+            ConsoleOut("  Player Characters Only %s -> %s",
+                snapshot.PlayerCharactersOnly ? "Enabled" : "Disabled",
+                modConfig.PlayerCharactersOnly ? "Enabled" : "Disabled");
+        }
+
+        for (int i = 0; i < ModConfig::TotalCappedSkills; i++)
+        {
+            if (snapshot.SkillCaps[i] != modConfig.SkillsMaxLevels[i].value)
+            {
+                ConsoleOut("  %s %s -> %s",
+                    modConfig.SkillsMaxLevels[i].iniName,
+                    FormatDouble(snapshot.SkillCaps[i], 4).c_str(),
+                    FormatDouble(modConfig.SkillsMaxLevels[i].value, 4).c_str());
+            }
+        }
     }
 }
 
@@ -226,31 +296,24 @@ void MainThreadFunction(HMODULE hModule)
 {
     char exePath[MAX_PATH];
     GetModuleFileNameA(NULL, exePath, MAX_PATH);
-    string directory = filesystem::path(exePath).parent_path().string();
+
+    char dllPath[MAX_PATH];
+    GetModuleFileNameA(hModule, dllPath, MAX_PATH);
+    string directory = filesystem::path(dllPath).parent_path().string();
 
     string configPath = PathCombine(directory, "Kenshi200Lvl_config.ini");
-    modConfig.configPath = configPath;
+    modConfig.ConfigPath = configPath;
 
     string exeName = filesystem::path(exePath).filename().generic_string();
 
     //
 
-    bool configExists = filesystem::exists(modConfig.configPath);
+    SI_Error rc = SI_FAIL;
+    bool configExists = filesystem::exists(modConfig.ConfigPath);
     if (configExists)
     {
-        CSimpleIniA ini;
-        ini.SetUnicode();
-
-        modConfig.configLastEditTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
-
-        SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
-        if (rc == SI_OK)
-        {
-            modConfig.ModEnabled = !!ini.GetLongValue("Parameters", "Enabled", modConfig.ModEnabled);
-            modConfig.MaxLevel = max<float>((float)ini.GetDoubleValue("Parameters", "Max Level", modConfig.MaxLevel), 101.0f);
-            modConfig.FadeLevel = clamp<float>((float)ini.GetDoubleValue("Parameters", "Fade Level", modConfig.FadeLevel), 0.0f, 101.0f);
-            modConfig.ShowConsole = !!ini.GetLongValue("Parameters", "Debug Console", modConfig.ShowConsole);
-        }
+        rc = ProcessConfigIni(modConfig);
+        modConfig.ConfigLastEditTimestamp = filesystem::last_write_time(modConfig.ConfigPath).time_since_epoch().count();
     }
 
     if (modConfig.ShowConsole)
@@ -259,18 +322,21 @@ void MainThreadFunction(HMODULE hModule)
 
         if (configExists)
         {
-            ConsoleOut("Loading config from: %s ...", modConfig.configPath.c_str());
-            ConsoleOut("Config processed");
+            ConsoleOut("Loading config from: %s ...", modConfig.ConfigPath.c_str());
+            if (rc == SI_OK) ConsoleOut("Config processed");
+		    else ConsoleOut("Error: Cannot process config file %d", (int)rc);
         }
         else
         {
-            ConsoleOut("CONFIG NOT FOUND: %s", modConfig.configPath.c_str());
+            ConsoleOut("CONFIG NOT FOUND: %s", modConfig.ConfigPath.c_str());
             ConsoleOut("Using default values");
         }
 
         ConsoleOut("");
         ConsoleOut("Game path: %s", exePath);
         ConsoleOut("Game process: %s", exeName.c_str());
+        ConsoleOut("Dll path: %s", dllPath);
+        ConsoleOut("Config path: %s", modConfig.ConfigPath.c_str());
 
         ConsoleOut("");
         ConsoleOut("Max Level: %s", FormatDouble(modConfig.MaxLevel, 4).c_str());
@@ -280,35 +346,58 @@ void MainThreadFunction(HMODULE hModule)
 
     //
 
-    DWORD relativeAddr = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
-    if (relativeAddr)
+    do
     {
-        modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
-        if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
+        if (!ResolveLevelingFunction(exePath, exeName))
         {
-            if (modConfig.ShowConsole) ConsoleOut("Function successfully hooked. Do not close this window");
-
-            if (modConfig.ModEnabled)
-            {
-                EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
-            }
-
-            while (true)
-            {
-                this_thread::sleep_for(chrono::milliseconds(1000));
-                UpdateModConfigAndData();
-            }
+            ConsoleOut("Error: Leveling function pattern not found");
+            break;
         }
-    }
+        if (!SetupLevelingHook(modConfig.LevelingFunctionAbsoluteAddr))
+        {
+            ConsoleOut("Error: Leveling function hook setup failed");
+            break;
+        }
 
-    if (modConfig.ShowConsole) ConsoleOut("Error: Cannot find target function in %s", exePath);
+        if (!ResolveIsPlayerCharacter(exePath, exeName))
+        {
+            ConsoleOut("Error: IsPlayerCharacter function pattern not found");
+            break;
+        }
 
-    DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
+        if (modConfig.ModEnabled)
+        {
+            EnableLevelingHook(modConfig.LevelingFunctionAbsoluteAddr);
+        }
+
+        ConsoleOut("Do not close this window.");
+
+        while (true)
+        {
+            this_thread::sleep_for(chrono::milliseconds(1000));
+            UpdateModConfigAndData();
+        }
+    } while (false);
+
+    this_thread::sleep_for(chrono::milliseconds(5000));
+
+    DetachDLL(modConfig.LevelingFunctionAbsoluteAddr, hModule);
+    DestroyConsoleWindow();
     this_thread::sleep_for(chrono::milliseconds(200));
     exit(1);
 }
 
+// Plugins.cfg (Nexus)
 extern "C" void __declspec(dllexport) dllStartPlugin(void)
 {
     CreateThread(nullptr, 0, (LPTHREAD_START_ROUTINE)MainThreadFunction, 0, 0, nullptr);
+}
+
+// RE_Kenshi (Steam)
+void __declspec(dllexport) startPlugin()
+{
+    HMODULE hModule = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCSTR>(&startPlugin), &hModule);
+
+    CreateThread(nullptr, 0, (LPTHREAD_START_ROUTINE)MainThreadFunction, hModule, 0, nullptr);
 }

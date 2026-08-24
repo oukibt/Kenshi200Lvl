@@ -310,6 +310,12 @@ void MainThreadFunction(HMODULE hModule)
 
     SI_Error rc = SI_FAIL;
     bool configExists = filesystem::exists(modConfig.ConfigPath);
+    if (!configExists && ToLower(filesystem::path(directory).filename().string()) == "re_kenshi")
+    {
+        modConfig.ConfigPath = PathCombine(filesystem::path(directory).parent_path().string(), "Kenshi200Lvl_config.ini");
+        configExists = filesystem::exists(modConfig.ConfigPath);
+    }
+
     if (configExists)
     {
         rc = ProcessConfigIni(modConfig);

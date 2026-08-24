@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include <chrono>
+#include <algorithm>
 
 #include <utils.h>
 
@@ -82,4 +83,16 @@ string ReadMsvcString(uintptr_t strAddr)
     }
 
     return string(buf, (size_t)size);
+}
+
+string ToLower(string str)
+{
+    transform(str.begin(), str.end(), str.begin(), ::tolower);
+    return str;
+}
+
+string ToUpper(string str)
+{
+    transform(str.begin(), str.end(), str.begin(), ::toupper);
+    return str;
 }

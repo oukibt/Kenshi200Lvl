@@ -15,6 +15,8 @@ void DestroyConsoleWindow();
 string PathCombine(const string& path1, const string& path2);
 string FormatDouble(double value, int maxDigitsAfterPoint = 6);
 string ReadMsvcString(uintptr_t strAddr);
+string ToLower(string str);
+string ToUpper(string str);
 
 template<typename T>
 bool SafeRead(uintptr_t addr, T& out)

@@ -39,6 +39,12 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
 {
     lock_guard<mutex> lock(modConfig.MutexLock);
 
+    const float maxFadeLevel = std::nextafterf(101.0f, 0.0f);
+
+    if (*valuePointer >= modConfig.MaxLevel) return;
+    float maxLevel = modConfig.MaxLevel;
+    float fadeLevel = min<float>(maxFadeLevel, modConfig.FadeLevel);
+
     uintptr_t character = 0, stats = 0;
     Skill currentSkill = Skill::Unknown;
     ResolveFromStatPtr(valuePointer, stats, character, currentSkill);
@@ -48,26 +54,24 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     float val;
     const float invFactor2 = 1.0f / factor2;
 
-    if (*valuePointer < modConfig.FadeLevel)
+    if (*valuePointer < fadeLevel)
     {
         float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
         val = normalizedDifference * normalizedDifference;
     }
     else
     {
-
         const bool dontUsePlayerCurve = !character || (modConfig.PlayerCharactersOnly && !CallIsPlayerCharacter_SEH(reinterpret_cast<void*>(character)));
 
         if (dontUsePlayerCurve) // NPC + .ini flag or junk
         {
-            if (*valuePointer > 101.0f) return;
+            if (*valuePointer >= factor2) return;
 
             float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
             val = normalizedDifference * normalizedDifference;
         }
         else
         {
-            float maxLevel = modConfig.MaxLevel;
             for (auto& skill : modConfig.SkillsMaxLevels)
             {
                 if (currentSkill == skill.skill)
@@ -77,11 +81,10 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
                 }
             }
 
-            if (*valuePointer > maxLevel) return;
-            if (maxLevel <= modConfig.FadeLevel) return;
+            if (*valuePointer >= maxLevel) return;
 
-            float normalizedProgress = (*valuePointer - modConfig.FadeLevel) / (maxLevel - modConfig.FadeLevel);
-            float baseDifficulty = (factor2 - modConfig.FadeLevel) * invFactor2;
+            float normalizedProgress = (*valuePointer - fadeLevel) / (maxLevel - fadeLevel);
+            float baseDifficulty = (factor2 - fadeLevel) * invFactor2;
             baseDifficulty *= baseDifficulty;
 
             // linear
@@ -95,7 +98,13 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     // NaN Check
     if (val == val && val > 0.0f && factor1 > 0.0f && factor1 <= 20.0f && val <= 20.0f)
     {
+        float oldVal = *valuePointer;
         *valuePointer += val * factor1;
+
+        if (oldVal == *valuePointer)
+        {
+            *valuePointer = std::nextafterf(*valuePointer, maxLevel);
+        }
     }
 }
 

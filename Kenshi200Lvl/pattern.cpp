@@ -2,14 +2,125 @@
 #include <utils.h>
 #include <hook.h>
 
-bool LooksLikeHeapPtr(uintptr_t p)
+static bool LooksLikeHeapPtr(uintptr_t p)
 {
-    if (p < 0x10000 || p > 0x00007FFFFFFFFFFFULL) return false;
+    if (p < 0x10000ULL || p > 0x00007FFFFFFFFFFFULL) return false;
     if (p >= 0x7FF000000000ULL && p < 0x800000000000ULL) return false;
     if ((p & 0x7) != 0) return false;
     return true;
 }
 
+static bool LooksLikeMsvcName(uintptr_t strAddr)
+{
+    uint64_t size = 0, cap = 0;
+    if (!SafeRead(strAddr + 0x10, size) || !SafeRead(strAddr + 0x18, cap))
+    {
+        return false;
+    }
+    
+    if (size == 0 || size > 64) return false;
+    if (cap < size) return false;
+    if (cap > 15)
+    {
+        uintptr_t heap = 0;
+        if (!SafeRead(strAddr, heap) || !LooksLikeHeapPtr(heap))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool LooksLikeCharacter(uintptr_t me)
+{
+    if (!LooksLikeHeapPtr(me)) return false;
+
+    uintptr_t faction = 0;
+    if (!SafeRead(me + 0x10, faction) || !LooksLikeHeapPtr(faction)) return false;
+
+    if (!LooksLikeMsvcName(me + 0x18)) return false;
+
+    float x = 0, y = 0, z = 0;
+    if (!SafeRead(me + 0x48, x) || !SafeRead(me + 0x4C, y) || !SafeRead(me + 0x50, z)) return false;
+    if (x != x || y != y || z != z) return false;
+
+    return true;
+}
+
+static bool LooksLikeCharStats(uintptr_t cand, uintptr_t expectedMe)
+{
+    uintptr_t me = 0;
+    if (!SafeRead(cand + 0x10, me) || me != expectedMe)
+    {
+        return false;
+    }
+
+    uintptr_t medical = 0;
+    if (SafeRead(cand + 0x08, medical) && medical != 0 && !LooksLikeHeapPtr(medical))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& character, Skill& skill)
+{
+    stats = 0;
+    character = 0;
+    skill = Skill::Unknown;
+
+    if (!valuePointer) return false;
+
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(valuePointer);
+
+    uintptr_t bestStats = 0;
+    uintptr_t bestMe = 0;
+    int bestOff = -1;
+    int bestScore = -1;
+
+    for (int off : kSkillOffs)
+    {
+        const uintptr_t cand = addr - static_cast<uintptr_t>(off);
+        if (cand < 0x10000ULL || (cand & 0x7) != 0) continue;
+
+        uintptr_t me = 0;
+        if (!SafeRead(cand + 0x10, me) || !LooksLikeCharacter(me)) continue;
+
+        if (!LooksLikeCharStats(cand, me)) continue;
+
+        int score = 10;
+
+        uintptr_t medical = 0;
+        if (SafeRead(cand + 0x08, medical) && LooksLikeHeapPtr(medical))
+        {
+            score += 5;
+        }
+
+        float sample = 0.f;
+        if (SafeRead(addr, sample) && sample == sample && sample >= -1.f && sample <= 500.f)
+        {
+            score += 2;
+        }
+
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestStats = cand;
+            bestMe = me;
+            bestOff = off;
+        }
+    }
+
+    if (bestOff < 0) return false;
+
+    stats = bestStats;
+    character = bestMe;
+    skill = static_cast<Skill>(bestOff);
+    return true;
+}
+
+/*
 bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& character, Skill& skill)
 {
     stats = 0;
@@ -36,9 +147,9 @@ bool ResolveFromStatPtr(float* valuePointer, uintptr_t& stats, uintptr_t& charac
 
     return false;
 }
+*/
 
-/*
-const char* SkillName(Skill s)
+const char* GetSkillName(Skill s)
 {
     switch (s)
     {
@@ -143,22 +254,20 @@ bool ReadAllSkills(uintptr_t stats, AllSkills& s)
 bool ReadSkill(uintptr_t stats, Skill skill, float& out)
 {
     out = 0.f;
-    if (!stats || skill == Skill::Unknown)
-        return false;
+    if (!stats || skill == Skill::Unknown) return false;
     return SafeRead(stats + static_cast<int>(skill), out);
 }
 
 bool WriteSkill(uintptr_t stats, Skill skill, float value)
 {
-    if (!stats || skill == Skill::Unknown)
-        return false;
-    __try {
+    if (!stats || skill == Skill::Unknown) return false;
+    __try
+    {
         *reinterpret_cast<float*>(stats + static_cast<int>(skill)) = value;
         return true;
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return false;
     }
 }
-
-*/

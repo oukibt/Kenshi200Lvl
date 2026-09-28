@@ -1,10 +1,11 @@
-#include <hook.h>
 #include <MinHook.h>
 #include <algorithm>
 #include <thread>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+
+#include <hook.h>
 
 DWORD RvaToOffset(DWORD rva, PIMAGE_SECTION_HEADER sectionHeader, unsigned int numberOfSections)
 {

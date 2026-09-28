@@ -10,21 +10,21 @@ ModConfig modConfig;
 //
 
 typedef void (*OriginalFunctionType)(float*, float, float);
-OriginalFunctionType levelingFunction = nullptr;
+OriginalFunctionType fn_LevelingFunction = nullptr;
 
 typedef bool(__fastcall* IsPlayerCharacter_fn)(void* character);
-IsPlayerCharacter_fn g_isPlayerCharacter = nullptr;
+IsPlayerCharacter_fn fn_IsPlayerCharacter = nullptr;
 
 // Ingame Functions
 
 bool CallIsPlayerCharacter_SEH(void* character)
 {
-    if (!character || !g_isPlayerCharacter) return false;
+    if (!character || !fn_IsPlayerCharacter) return false;
 
     bool r = false;
     __try
     {
-        r = g_isPlayerCharacter(character);
+        r = fn_IsPlayerCharacter(character);
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
@@ -48,8 +48,6 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     uintptr_t character = 0, stats = 0;
     Skill currentSkill = Skill::Unknown;
     ResolveFromStatPtr(valuePointer, stats, character, currentSkill);
-
-    // std::string name = character ? ReadMsvcString(character + 0x18) : "UNKNOWN";
 
     float val;
     const float invFactor2 = 1.0f / factor2;
@@ -91,7 +89,7 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
             // val = baseDifficulty * (1.0f - normalizedProgress);
 
             // smooth (vanilla based)
-            val = baseDifficulty * (1.0 - normalizedProgress) * (1.0 - normalizedProgress);
+            val = baseDifficulty * (1.0 - normalizedProgress) * (1.0f - normalizedProgress);
         }
     }
 
@@ -121,14 +119,14 @@ bool ResolveIsPlayerCharacter(const std::string& exePath, const std::string& exe
         base = GetModuleHandleW(nullptr);
     }
 
-    g_isPlayerCharacter = reinterpret_cast<IsPlayerCharacter_fn>((DWORD_PTR)base + rva);
+    fn_IsPlayerCharacter = reinterpret_cast<IsPlayerCharacter_fn>((DWORD_PTR)base + rva);
 
     if (modConfig.ShowConsole)
     {
-        ConsoleOut("IsPlayerCharacter @ %p (RVA 0x%X)", g_isPlayerCharacter, rva);
+        ConsoleOut("IsPlayerCharacter @ %p (RVA 0x%X)", fn_IsPlayerCharacter, rva);
     }
 
-    return g_isPlayerCharacter != nullptr;
+    return fn_IsPlayerCharacter != nullptr;
 }
 
 bool ResolveLevelingFunction(const std::string& exePath, const std::string& exeName)
@@ -157,7 +155,7 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
-    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&levelingFunction) != MH_OK)
+    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&fn_LevelingFunction) != MH_OK)
     {
         cerr << "Failed to create the hook." << endl;
         return false;
@@ -335,6 +333,10 @@ void MainThreadFunction(HMODULE hModule)
     {
         CreateConsoleWindow();
 
+        ConsoleOut("KENSHI 200 LVL");
+        ConsoleOut("Set the \'Debug Console\' parameter to 0 in config file to disable the debug console");
+        ConsoleOut("");
+
         if (configExists)
         {
             ConsoleOut("Loading config from: %s ...", modConfig.ConfigPath.c_str());
@@ -385,7 +387,7 @@ void MainThreadFunction(HMODULE hModule)
             EnableLevelingHook(modConfig.LevelingFunctionAbsoluteAddr);
         }
 
-        ConsoleOut("Do not close this window.");
+        ConsoleOut("Do not close this window...");
 
         while (true)
         {

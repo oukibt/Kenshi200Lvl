@@ -24,8 +24,6 @@
 #include <SimpleIni.h>
 #include <pattern.h>
 
-bool IsGameBreakingSkill(Skill skill);
-
 struct SkillMaxLevelConfig
 {
     const char* iniName;
